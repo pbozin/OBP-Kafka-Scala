@@ -1,5 +1,5 @@
-Temenos Kafka Connector
-========================
+OBP Kafka Sandbox Connector
+===========================
 
 
 Prerequisites:
@@ -11,7 +11,7 @@ Prerequisites:
 Configure:
 ----------
 
-  Set connection parameters for Kafka and Temenos in file:
+  Set connection parameters for Kafka and sandbox file in:
 
     src/main/resources/application.conf 
 
