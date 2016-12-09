@@ -21,19 +21,23 @@ Osloerstrasse 16/17
 Berlin 13359, Germany
 */
 
-import java.util.Properties
+import java.util.{Optional, Properties}
 import java.util.concurrent.TimeUnit
 
 import akka.actor.ActorSystem
-import code.ResponseCache
+import com.tesobe.obp.kafka.SimpleSouth
+import com.tesobe.obp.transport.{Decoder, Encoder, Responder, Transport}
+import com.tesobe.obp.transport.Transport.Factory
+import com.tesobe.obp.transport.spi.{ReceiverNov2016, DefaultResponder, LoggingReceiver}
+import com.tesobe.obp.transport.spi.Receiver.Codecs
 import com.typesafe.config.ConfigFactory
 import kafka.utils.Json
 import net.liftweb.json
-import net.liftweb.json.{DefaultFormats, JsonAST}
+import net.liftweb.json.{DefaultFormats, JsonAST, Serialization}
 import org.apache.commons.codec.binary.Base64
+import net.liftweb.util.Props
 
 import scala.io.Source
-
 import scala.concurrent.duration.Duration
 
 object  OBPKafkaSandbox extends App {
@@ -43,19 +47,52 @@ object  OBPKafkaSandbox extends App {
   org.apache.log4j.PropertyConfigurator.configure(props)
   val config = ConfigFactory.load()
   val sandboxFilename = config.getString("sandbox.filename")
-  val transform = new OBPTransform()
-  transform.importSandboxData(sandboxFilename)
-  //consumer.run(producer, transform.processRequest)
+
+  val factory : Factory = Transport.factory(Transport.Version.Nov2016, Transport.Encoding.json).get
+  //val factory : Factory = Transport.defaultFactory()
+  val responder = new OBPResponder
+  responder.importSandboxData(sandboxFilename)
+
+  val receiver = new ReceiverNov2016(responder, factory.codecs())
+
+  type JAccount = com.tesobe.obp.transport.Account
+  type JBank = com.tesobe.obp.transport.Bank
+  type JTransaction = com.tesobe.obp.transport.Transaction
+
+  type JConnector = com.tesobe.obp.transport.Connector
+  type JHashMap = java.util.HashMap[String, Object]
+
+  val producerProps : JHashMap = new JHashMap
+  val consumerProps : JHashMap = new JHashMap
+
+  consumerProps.put("bootstrap.servers", Props.get("kafka.host").openOr("localhost:9092"))
+  producerProps.put("bootstrap.servers", Props.get("kafka.host").openOr("localhost:9092"))
+
+  val south: SimpleSouth = new SimpleSouth(
+    Props.get("kafka.request_topic").openOr("Request"),
+    Props.get("kafka.response_topic").openOr("Response"),
+    consumerProps, producerProps, new LoggingReceiver(receiver)
+  )
+
+  val connector = factory.connector(south)
+  south.receive() // start Kafka
+
 }
 
 
-class OBPTransform (){
+class OBPResponder extends DefaultResponder {
 
   implicit var formats = DefaultFormats
+  var sandboxJson = json.parse("") 
 
   def importSandboxData(sandboxFilename: String) = {
-    val sandboxJson = json.parse(Source.fromFile(sandboxFilename).mkString)
+    sandboxJson = json.parse(Source.fromFile(sandboxFilename).mkString)
     println(sandboxJson)
-  } 
+  }
+
+  override def getBanks(p: Decoder.Pager, ps: Decoder.Parameters, e: Encoder): String = { 
+    return Serialization.write(sandboxJson \ "banks")
+  }
 
 }
+
