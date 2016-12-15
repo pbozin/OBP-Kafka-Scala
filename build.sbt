@@ -24,7 +24,7 @@ resolvers ++= Seq(
 val akkaVersion  = "2.4.8"
 val scalaTestV   = "2.2.6"
 //val obpjvmVersion = "2016.9-ALPHA11-SNAPSHOT"
-val obpjvmVersion = "2016.11-RC2-SNAPSHOT"
+val obpjvmVersion = "2016.9-ALPHA12-SOCGEN2"
 
 libraryDependencies ++= {
 

@@ -25,14 +25,20 @@ import java.util.{Optional, Properties}
 import java.util.concurrent.TimeUnit
 
 import akka.actor.ActorSystem
+import code.json.{AccountJSON, BankJSON, TransactionId}
 import com.tesobe.obp.kafka.SimpleSouth
-import com.tesobe.obp.transport.{Decoder, Encoder, Responder, Transport}
+import com.tesobe.obp.transport.Transport
 import com.tesobe.obp.transport.Transport.Factory
-import com.tesobe.obp.transport.spi.{ReceiverNov2016, DefaultResponder, LoggingReceiver}
-import com.tesobe.obp.transport.spi.Receiver.Codecs
+import com.tesobe.obp.transport.spi._
 import com.typesafe.config.ConfigFactory
 import kafka.utils.Json
+import net.liftweb.common.Full
+import net.liftweb.util.Helpers.tryo
 import net.liftweb.json
+import net.liftweb.json.Extraction
+import net.liftweb.json.compactRender
+import net.liftweb.json.render
+import net.liftweb.json.JsonAST.{JField, JObject, JString, JValue}
 import net.liftweb.json.{DefaultFormats, JsonAST, Serialization}
 import org.apache.commons.codec.binary.Base64
 import net.liftweb.util.Props
@@ -48,12 +54,13 @@ object  OBPKafkaSandbox extends App {
   val config = ConfigFactory.load()
   val sandboxFilename = config.getString("sandbox.filename")
 
-  val factory : Factory = Transport.factory(Transport.Version.Nov2016, Transport.Encoding.json).get
-  //val factory : Factory = Transport.defaultFactory()
-  val responder = new OBPResponder
-  responder.importSandboxData(sandboxFilename)
+  //val factory : Factory = Transport.factory(Transport.Version.Nov2016, Transport.Encoding.json).get
+  val factory : Factory = Transport.defaultFactory()
+  //val responder = new OBPResponder
+  //responder.importSandboxData(sandboxFilename)
 
-  val receiver = new ReceiverNov2016(responder, factory.codecs())
+  val receiver = new OBPResponder(factory.decoder(), factory.encoder())
+  receiver.importSandboxData(sandboxFilename)
 
   type JAccount = com.tesobe.obp.transport.Account
   type JBank = com.tesobe.obp.transport.Bank
@@ -71,6 +78,7 @@ object  OBPKafkaSandbox extends App {
   val south: SimpleSouth = new SimpleSouth(
     Props.get("kafka.request_topic").openOr("Request"),
     Props.get("kafka.response_topic").openOr("Response"),
+
     consumerProps, producerProps, new LoggingReceiver(receiver)
   )
 
@@ -80,7 +88,7 @@ object  OBPKafkaSandbox extends App {
 }
 
 
-class OBPResponder extends DefaultResponder {
+class OBPResponder(d: Decoder, e: Encoder) extends DefaultReceiver(d, e) {
 
   implicit var formats = DefaultFormats
   var sandboxJson = json.parse("") 
@@ -90,8 +98,73 @@ class OBPResponder extends DefaultResponder {
     println(sandboxJson)
   }
 
-  override def getBanks(p: Decoder.Pager, ps: Decoder.Parameters, e: Encoder): String = { 
-    return Serialization.write(sandboxJson \ "banks")
+  override def getBanks(r: Decoder.Request, e: Encoder): String = {
+    val list = for {
+      banks@JObject(_) <- sandboxJson \ "banks"
+      bank@JObject(b) <- banks
+      JField("id", JString(id)) <- bank
+      JField("short_name", JString(short)) <- bank
+      JField("full_name", JString(name)) <- bank
+      JField("logo", JString(logo)) <- bank
+      JField("website", JString(url)) <- bank
+    } yield BankJSON(id, short, name, logo, url)
+    return compactRender(Extraction.decompose(list))
+  }
+
+  override def getBank(r: Decoder.Request, e: Encoder): String = {
+    val list = for {
+      banks@JObject(_) <- sandboxJson \ "banks"
+      bank@JObject(b) <- banks
+      if (b contains JField("id", JString(r.bankId.get)))
+      JField("id", JString(id)) <- bank
+      JField("short_name", JString(short)) <- bank
+      JField("full_name", JString(name)) <- bank
+      JField("logo", JString(logo)) <- bank
+      JField("website", JString(url)) <- bank
+    } yield BankJSON(id, short, name, logo, url)
+    val xyz = list match {
+      case List(x) => x
+      case _ => BankJSON("", "", "", "", "")
+    }
+    return compactRender(Extraction.decompose(xyz))
+  }
+
+  override def getAccount(r: Decoder.Request,  e: Encoder): String = {
+    val list = for {
+      accounts@JObject(_) <- sandboxJson \ "accounts"
+      account@JObject(a) <- accounts
+      if (a contains JField("id", JString(r.accountId().get)))
+      if (a contains JField("bank", JString(r.bankId().get)))
+      JString(id) <- account \\ "id"
+      JString(bank) <- account \\ "bank"
+      JString(label) <- account \\ "label"
+      JString(number) <- account \\ "number"
+      JString(type1) <- account \\ "type"
+      JString(currency) <- account \\ "currency"
+      JString(amount) <- account \\ "amount"
+      JString(iban) <- account \\ "IBAN"
+    } yield AccountJSON(id, bank, label, number, type1, currency, amount, iban)
+    val xyz = list match {
+      case List(x) => x
+      case _ => AccountJSON("", "", "", "", "","","","")
+    }
+    return compactRender(Extraction.decompose(xyz))
+  }
+
+  override def getAccounts(r: Decoder.Request,  e: Encoder): String = {
+    val list = for {
+      accounts@JObject(_) <- sandboxJson \ "accounts"
+      account@JObject(a) <- accounts
+      JString(id) <- account \\ "id"
+      JString(bank) <- account \\ "bank"
+      JString(label) <- account \\ "label"
+      JString(number) <- account \\ "number"
+      JString(type1) <- account \\ "type"
+      JString(currency) <- account \\ "currency"
+      JString(amount) <- account \\ "amount"
+      JString(iban) <- account \\ "IBAN"
+    } yield AccountJSON(id, bank, label, number, type1, currency, amount, iban)
+    return compactRender(Extraction.decompose(list))
   }
 
 }
